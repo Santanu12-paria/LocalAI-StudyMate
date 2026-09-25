@@ -207,7 +207,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Store in session cache
+        # Store processed document in session cache
         # ----------------------------------------------------
 
         st.session_state[cache_key] = (
@@ -235,7 +235,7 @@ if uploaded_file is not None:
     if previous_document_id != document_id:
 
         # ----------------------------------------------------
-        # Clear chat when a different PDF is uploaded
+        # Clear old conversation for a new PDF
         # ----------------------------------------------------
 
         st.session_state.messages = []
@@ -397,7 +397,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Store user message
+        # Store user question
         # ----------------------------------------------------
 
         st.session_state.messages.append(
@@ -638,6 +638,28 @@ Page {page_number}:
 
 
     # ========================================================
+    # FEATURE 10 — CLEAR CONVERSATION
+    # ========================================================
+
+    if st.session_state.get("messages"):
+
+        st.divider()
+
+        st.subheader(
+            "🧹 Conversation Controls"
+        )
+
+
+        if st.button(
+            "🗑️ Clear Conversation"
+        ):
+
+            st.session_state.messages = []
+
+            st.rerun()
+
+
+    # ========================================================
     # FEATURE 9 — EXPORT CHAT HISTORY
     # ========================================================
 
@@ -672,7 +694,7 @@ Page {page_number}:
 
 
         # ----------------------------------------------------
-        # Add every conversation message
+        # Add conversation messages
         # ----------------------------------------------------
 
         for message in st.session_state.messages:
@@ -745,5 +767,6 @@ st.caption(
     "Semantic Search → Conversational RAG → "
     "Caching → Query Rewriting → "
     "Similarity Filtering → Page Citations → "
-    "Conversation Export → AI Answer"
+    "Conversation Export → Clear Conversation → "
+    "AI Answer"
 )
