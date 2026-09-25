@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local data
 data/documents/*
+
+# Local backup files
+app_feature12_backup.py
