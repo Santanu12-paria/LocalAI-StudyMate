@@ -91,7 +91,8 @@ def retrieve_relevant_chunks(
     chunks,
     document_embeddings,
     embedding_model,
-    top_k=3
+    top_k=3,
+    similarity_threshold=0.30
 ):
     """
     Retrieve the most relevant chunks
@@ -124,14 +125,18 @@ def retrieve_relevant_chunks(
 
     for index in top_indices:
 
-        results.append(
-            {
-                "chunk": chunks[index],
-                "score": float(
-                    similarities[index]
-                ),
-                "index": int(index)
-            }
+        score = float(
+            similarities[index]
         )
+
+        if score >= similarity_threshold:
+
+            results.append(
+                {
+                    "chunk": chunks[index],
+                    "score": score,
+                    "index": int(index)
+                }
+            )
 
     return results
