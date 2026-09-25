@@ -2,8 +2,9 @@ import streamlit as st
 import hashlib
 from io import BytesIO
 
+from sentence_transformers import SentenceTransformer
+
 from src.pdf_processor import (
-    extract_text_from_pdf,
     extract_pages_from_pdf,
     split_pages_into_chunks
 )
@@ -14,8 +15,8 @@ from src.rag import (
 )
 
 from src.model import (
-    generate_answer,
     generate_search_query,
+    generate_answer,
     generate_summary,
     generate_key_points,
     generate_study_questions,
@@ -29,85 +30,118 @@ from src.model import (
 
 st.set_page_config(
     page_title="LocalAI StudyMate",
-    page_icon="📚",
+    page_icon="🧠",
     layout="wide"
 )
 
 
 # ============================================================
-# TITLE
-# ============================================================
-
-st.title("📚 LocalAI StudyMate")
-
-st.write(
-    "Upload a PDF and ask questions using "
-    "a local AI-powered Retrieval-Augmented Generation system."
-)
-
-
-# ============================================================
-# LOAD EMBEDDING MODEL
+# EMBEDDING MODEL
 # ============================================================
 
 @st.cache_resource
 def load_embedding_model():
 
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(
+    return SentenceTransformer(
         "all-MiniLM-L6-v2"
     )
-
-    return model
 
 
 embedding_model = load_embedding_model()
 
 
 # ============================================================
-# DOCUMENT PROCESSING
+# SESSION STATE
 # ============================================================
 
-@st.cache_data(show_spinner=False)
-def process_document(pdf_bytes):
+if "documents" not in st.session_state:
 
-    full_text, page_count = extract_text_from_pdf(
-        pdf_bytes
+    st.session_state.documents = {}
+
+
+if "active_document" not in st.session_state:
+
+    st.session_state.active_document = None
+
+
+if "chat_history" not in st.session_state:
+
+    st.session_state.chat_history = []
+
+
+if "study_results" not in st.session_state:
+
+    st.session_state.study_results = {}
+
+
+if "study_type" not in st.session_state:
+
+    st.session_state.study_type = "Summary"
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def get_document_id(file_bytes):
+
+    return hashlib.md5(
+        file_bytes
+    ).hexdigest()
+
+
+def process_document(
+    file_name,
+    file_bytes
+):
+
+    document_id = get_document_id(
+        file_bytes
     )
+
+    # Use existing cached document
+    if document_id in st.session_state.documents:
+
+        return document_id
 
     pages = extract_pages_from_pdf(
-        pdf_bytes
+        file_bytes
     )
 
-    chunk_data = split_pages_into_chunks(
+    chunks = split_pages_into_chunks(
         pages,
         chunk_size=1000,
         overlap=200
     )
 
-    chunks = [
+    chunk_texts = [
         item["chunk"]
-        for item in chunk_data
+        for item in chunks
     ]
 
-    document_embeddings = create_embeddings(
-        chunks,
+    embeddings = create_embeddings(
+        chunk_texts,
         embedding_model
     )
 
-    return (
-        full_text,
-        page_count,
-        chunk_data,
-        chunks,
-        document_embeddings
-    )
+    st.session_state.documents[
+        document_id
+    ] = {
 
+        "name": file_name,
 
-# ============================================================
-# FEATURE 12 — CREATE STUDY MATERIAL PDF
-# ============================================================
+        "pages": pages,
+
+        "chunks": chunks,
+
+        "embeddings": embeddings,
+
+        "file_size": len(file_bytes)
+
+    }
+
+    return document_id
+
 
 def create_study_material_pdf(
     document_name,
@@ -115,18 +149,22 @@ def create_study_material_pdf(
 ):
 
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+
+    from reportlab.lib.styles import (
+        getSampleStyleSheet
+    )
+
     from reportlab.lib.enums import TA_CENTER
+
     from reportlab.platypus import (
         SimpleDocTemplate,
         Paragraph,
         Spacer
     )
+
     from xml.sax.saxutils import escape
 
-
     pdf_buffer = BytesIO()
-
 
     document = SimpleDocTemplate(
         pdf_buffer,
@@ -137,26 +175,17 @@ def create_study_material_pdf(
         bottomMargin=50
     )
 
-
     styles = getSampleStyleSheet()
-
 
     title_style = styles["Title"]
 
     title_style.alignment = TA_CENTER
 
-
     heading_style = styles["Heading1"]
 
     body_style = styles["BodyText"]
 
-
     story = []
-
-
-    # ========================================================
-    # PDF TITLE
-    # ========================================================
 
     story.append(
         Paragraph(
@@ -165,11 +194,9 @@ def create_study_material_pdf(
         )
     )
 
-
     story.append(
         Spacer(1, 12)
     )
-
 
     story.append(
         Paragraph(
@@ -178,59 +205,43 @@ def create_study_material_pdf(
         )
     )
 
-
     story.append(
         Spacer(1, 12)
     )
-
 
     safe_document_name = escape(
         document_name
     )
 
-
     story.append(
         Paragraph(
-            f"<b>Document:</b> {safe_document_name}",
+            f"<b>Document:</b> "
+            f"{safe_document_name}",
             body_style
         )
     )
-
 
     story.append(
         Spacer(1, 20)
     )
 
-
-    # ========================================================
-    # STUDY MATERIAL SECTIONS
-    # ========================================================
-
     sections = [
-        (
-            "Summary",
-            "summary"
-        ),
-        (
-            "Key Points",
-            "key_points"
-        ),
-        (
-            "Study Questions",
-            "questions"
-        ),
-        (
-            "Important Definitions",
-            "definitions"
-        )
-    ]
 
+        ("Summary", "summary"),
+
+        ("Key Points", "key_points"),
+
+        ("Study Questions", "questions"),
+
+        ("Important Definitions", "definitions")
+
+    ]
 
     for title, key in sections:
 
         if key not in study_results:
-            continue
 
+            continue
 
         story.append(
             Paragraph(
@@ -239,22 +250,17 @@ def create_study_material_pdf(
             )
         )
 
-
         story.append(
             Spacer(1, 8)
         )
 
-
         content = study_results[key]
 
-
         lines = content.split("\n")
-
 
         for line in lines:
 
             line = line.strip()
-
 
             if not line:
 
@@ -264,50 +270,34 @@ def create_study_material_pdf(
 
                 continue
 
-
-            # Remove Markdown heading symbols
-
             if line.startswith("### "):
 
                 line = line[4:]
-
 
             elif line.startswith("## "):
 
                 line = line[3:]
 
-
             elif line.startswith("# "):
 
                 line = line[2:]
-
-
-            # Convert Markdown bullets
 
             elif line.startswith("- "):
 
                 line = "• " + line[2:]
 
-
             elif line.startswith("* "):
 
                 line = "• " + line[2:]
-
-
-            # Escape special HTML characters
 
             clean_line = escape(
                 line
             )
 
-
-            # Convert bullet symbol to PDF entity
-
             clean_line = clean_line.replace(
                 "•",
                 "&#8226;"
             )
-
 
             story.append(
                 Paragraph(
@@ -316,910 +306,797 @@ def create_study_material_pdf(
                 )
             )
 
-
             story.append(
                 Spacer(1, 4)
             )
-
 
         story.append(
             Spacer(1, 15)
         )
 
-
-    # ========================================================
-    # BUILD PDF
-    # ========================================================
-
     document.build(
         story
     )
 
-
     pdf_buffer.seek(0)
-
 
     return pdf_buffer.getvalue()
 
 
 # ============================================================
-# FILE UPLOADER
+# SIDEBAR — DOCUMENT LIBRARY
 # ============================================================
 
-uploaded_file = st.file_uploader(
-    "📄 Upload your PDF",
-    type=["pdf"]
-)
+with st.sidebar:
 
-
-# ============================================================
-# PROCESS PDF
-# ============================================================
-
-if uploaded_file is not None:
-
-    pdf_bytes = uploaded_file.getvalue()
-
-
-    # ========================================================
-    # DOCUMENT ID
-    # ========================================================
-
-    document_id = hashlib.sha256(
-        pdf_bytes
-    ).hexdigest()
-
-
-    cache_key = (
-        f"document_cache_{document_id}"
+    st.title(
+        "📚 Document Library"
     )
 
-
-    # ========================================================
-    # DOCUMENT CACHE
-    # ========================================================
-
-    if cache_key in st.session_state:
-
-        (
-            full_text,
-            page_count,
-            chunk_data,
-            chunks,
-            document_embeddings
-        ) = st.session_state[cache_key]
-
-
-        cache_status = (
-            "⚡ Loaded from document cache"
-        )
-
-
-    else:
-
-        with st.spinner(
-            "🔄 Processing your PDF..."
-        ):
-
-            (
-                full_text,
-                page_count,
-                chunk_data,
-                chunks,
-                document_embeddings
-            ) = process_document(
-                pdf_bytes
-            )
-
-
-        st.session_state[cache_key] = (
-            full_text,
-            page_count,
-            chunk_data,
-            chunks,
-            document_embeddings
-        )
-
-
-        cache_status = (
-            "✅ Document processed and cached"
-        )
-
-
-    # ========================================================
-    # NEW DOCUMENT DETECTION
-    # ========================================================
-
-    previous_document_id = st.session_state.get(
-        "current_document_id"
+    st.write(
+        "Upload multiple PDF documents "
+        "and select one for chatting."
     )
 
-
-    if previous_document_id != document_id:
-
-        st.session_state.messages = []
-
-        st.session_state.study_results = {}
-
-        st.session_state.current_document_id = (
-            document_id
-        )
-
-
-    # ========================================================
-    # CACHE STATUS
-    # ========================================================
-
-    st.success(
-        cache_status
+    uploaded_files = st.file_uploader(
+        "Upload PDF documents",
+        type=["pdf"],
+        accept_multiple_files=True
     )
 
+    if uploaded_files:
 
-    # ========================================================
-    # DOCUMENT INFORMATION
-    # ========================================================
+        for uploaded_file in uploaded_files:
 
-    st.subheader(
-        "📊 Document Information"
-    )
+            file_bytes = uploaded_file.getvalue()
 
+            try:
 
-    col1, col2, col3, col4 = st.columns(4)
+                document_id = process_document(
+                    uploaded_file.name,
+                    file_bytes
+                )
 
+                if (
+                    st.session_state.active_document
+                    is None
+                ):
 
-    with col1:
+                    st.session_state.active_document = (
+                        document_id
+                    )
 
-        st.metric(
-            "Pages",
-            page_count
-        )
+            except Exception as e:
 
-
-    with col2:
-
-        st.metric(
-            "Characters",
-            len(full_text)
-        )
-
-
-    with col3:
-
-        st.metric(
-            "Text Chunks",
-            len(chunks)
-        )
-
-
-    with col4:
-
-        if len(document_embeddings.shape) > 1:
-
-            embedding_size = (
-                document_embeddings.shape[1]
-            )
-
-        else:
-
-            embedding_size = 0
-
-
-        st.metric(
-            "Embedding Size",
-            embedding_size
-        )
-
-
-    # ========================================================
-    # FEATURE 11 — STUDY MODE
-    # ========================================================
+                st.error(
+                    f"Could not process "
+                    f"{uploaded_file.name}: {e}"
+                )
 
     st.divider()
 
-
     st.subheader(
-        "📚 Study Mode"
+        "📄 Your Documents"
     )
 
+    if not st.session_state.documents:
 
-    st.write(
-        "Generate study material from your uploaded PDF "
-        "using the local AI model."
-    )
-
-
-    # ========================================================
-    # STUDY MODE BUTTONS
-    # ========================================================
-
-    study_col1, study_col2 = st.columns(2)
-
-    study_col3, study_col4 = st.columns(2)
-
-
-    with study_col1:
-
-        summary_button = st.button(
-            "📝 Summary",
-            use_container_width=True
+        st.info(
+            "No documents uploaded yet."
         )
 
+    else:
 
-    with study_col2:
-
-        key_points_button = st.button(
-            "🔑 Key Points",
-            use_container_width=True
+        document_ids = list(
+            st.session_state.documents.keys()
         )
 
+        document_names = [
 
-    with study_col3:
+            st.session_state.documents[
+                doc_id
+            ]["name"]
 
-        questions_button = st.button(
-            "❓ Study Questions",
-            use_container_width=True
-        )
+            for doc_id in document_ids
 
+        ]
 
-    with study_col4:
-
-        definitions_button = st.button(
-            "📖 Important Definitions",
-            use_container_width=True
-        )
-
-
-    # ========================================================
-    # INITIALIZE STUDY RESULTS
-    # ========================================================
-
-    if "study_results" not in st.session_state:
-
-        st.session_state.study_results = {}
-
-
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-
-    if summary_button:
-
-        with st.spinner(
-            "📝 Generating summary..."
-        ):
-
-            summary = generate_summary(
-                full_text
-            )
-
-
-        st.session_state.study_results[
-            "summary"
-        ] = summary
-
-
-    # ========================================================
-    # KEY POINTS
-    # ========================================================
-
-    if key_points_button:
-
-        with st.spinner(
-            "🔑 Generating key points..."
-        ):
-
-            key_points = generate_key_points(
-                full_text
-            )
-
-
-        st.session_state.study_results[
-            "key_points"
-        ] = key_points
-
-
-    # ========================================================
-    # STUDY QUESTIONS
-    # ========================================================
-
-    if questions_button:
-
-        with st.spinner(
-            "❓ Generating study questions..."
-        ):
-
-            study_questions = (
-                generate_study_questions(
-                    full_text
-                )
-            )
-
-
-        st.session_state.study_results[
-            "questions"
-        ] = study_questions
-
-
-    # ========================================================
-    # DEFINITIONS
-    # ========================================================
-
-    if definitions_button:
-
-        with st.spinner(
-            "📖 Generating important definitions..."
-        ):
-
-            definitions = generate_definitions(
-                full_text
-            )
-
-
-        st.session_state.study_results[
-            "definitions"
-        ] = definitions
-
-
-    # ========================================================
-    # DISPLAY STUDY RESULTS
-    # ========================================================
-
-    if st.session_state.study_results:
-
-        st.divider()
-
-
-        st.markdown(
-            "## 📚 Generated Study Material"
-        )
-
-
-        # ----------------------------------------------------
-        # Summary
-        # ----------------------------------------------------
-
-        if "summary" in st.session_state.study_results:
-
-            with st.expander(
-                "📝 Summary",
-                expanded=True
-            ):
-
-                st.markdown(
-                    st.session_state.study_results[
-                        "summary"
-                    ]
-                )
-
-
-        # ----------------------------------------------------
-        # Key Points
-        # ----------------------------------------------------
-
-        if "key_points" in st.session_state.study_results:
-
-            with st.expander(
-                "🔑 Key Points",
-                expanded=True
-            ):
-
-                st.markdown(
-                    st.session_state.study_results[
-                        "key_points"
-                    ]
-                )
-
-
-        # ----------------------------------------------------
-        # Study Questions
-        # ----------------------------------------------------
-
-        if "questions" in st.session_state.study_results:
-
-            with st.expander(
-                "❓ Study Questions",
-                expanded=True
-            ):
-
-                st.markdown(
-                    st.session_state.study_results[
-                        "questions"
-                    ]
-                )
-
-
-        # ----------------------------------------------------
-        # Important Definitions
-        # ----------------------------------------------------
-
-        if "definitions" in st.session_state.study_results:
-
-            with st.expander(
-                "📖 Important Definitions",
-                expanded=True
-            ):
-
-                st.markdown(
-                    st.session_state.study_results[
-                        "definitions"
-                    ]
-                )
-
-
-        # ====================================================
-        # FEATURE 12 — DOWNLOAD AS PDF
-        # ====================================================
-
-        st.divider()
-
-
-        st.markdown(
-            "### 📥 Download Study Material"
-        )
-
-
-        st.write(
-            "Download your generated study material "
-            "as a PDF file."
-        )
-
-
-        with st.spinner(
-            "📄 Preparing PDF..."
-        ):
-
-            study_pdf = create_study_material_pdf(
-                uploaded_file.name,
-                st.session_state.study_results
-            )
-
-
-        st.download_button(
-            label="📥 Download Study Material as PDF",
-            data=study_pdf,
-            file_name=(
-                "LocalAI_StudyMate_Study_Material.pdf"
-            ),
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-
-    # ========================================================
-    # EXTRACTED TEXT
-    # ========================================================
-
-    with st.expander(
-        "📖 View Extracted Text"
-    ):
-
-        st.text_area(
-            "Complete PDF Text",
-            full_text,
-            height=300
-        )
-
-
-    # ========================================================
-    # VIEW TEXT CHUNKS
-    # ========================================================
-
-    with st.expander(
-        "🧩 View Text Chunks"
-    ):
-
-        for index, item in enumerate(
-            chunk_data,
-            start=1
-        ):
-
-            st.markdown(
-                f"**Chunk {index} — Page {item['page']}**"
-            )
-
-
-            st.write(
-                item["chunk"]
-            )
-
-
-            st.divider()
-
-
-    # ========================================================
-    # CHAT HISTORY
-    # ========================================================
-
-    if "messages" not in st.session_state:
-
-        st.session_state.messages = []
-
-
-    for message in st.session_state.messages:
-
-        with st.chat_message(
-            message["role"]
-        ):
-
-            st.markdown(
-                message["content"]
-            )
-
-
-    # ========================================================
-    # USER QUESTION
-    # ========================================================
-
-    question = st.chat_input(
-        "Ask a question about your PDF..."
-    )
-
-
-    if question:
-
-        # ----------------------------------------------------
-        # Display user question
-        # ----------------------------------------------------
-
-        with st.chat_message(
-            "user"
-        ):
-
-            st.markdown(
-                question
-            )
-
-
-        # ----------------------------------------------------
-        # Save user question
-        # ----------------------------------------------------
-
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": question
-            }
-        )
-
-
-        # ====================================================
-        # BUILD CHAT HISTORY
-        # ====================================================
-
-        previous_messages = (
-            st.session_state.messages[:-1]
-        )
-
-
-        chat_history_parts = []
-
-
-        for message in previous_messages:
-
-            role = message["role"].capitalize()
-
-            content = message["content"]
-
-
-            chat_history_parts.append(
-                f"{role}: {content}"
-            )
-
-
-        chat_history = "\n".join(
-            chat_history_parts
-        )
-
-
-        # ====================================================
-        # QUERY REWRITING
-        # ====================================================
-
-        with st.spinner(
-            "🔎 Understanding your question..."
-        ):
-
-            search_query = generate_search_query(
-                question,
-                chat_history
-            )
-
+        selected_index = 0
 
         if (
-            search_query.strip()
-            != question.strip()
+            st.session_state.active_document
+            in document_ids
         ):
 
-            with st.expander(
-                "🔎 Retrieval Query"
-            ):
-
-                st.markdown(
-                    "**Original Question:**"
-                )
-
-
-                st.write(
-                    question
-                )
-
-
-                st.markdown(
-                    "**Rewritten Search Query:**"
-                )
-
-
-                st.write(
-                    search_query
-                )
-
-
-        # ====================================================
-        # RETRIEVE RELEVANT CHUNKS
-        # ====================================================
-
-        with st.spinner(
-            "🔍 Searching relevant sections..."
-        ):
-
-            relevant_chunks = (
-                retrieve_relevant_chunks(
-                    query=search_query,
-                    chunks=chunks,
-                    document_embeddings=document_embeddings,
-                    embedding_model=embedding_model,
-                    top_k=3
-                )
+            selected_index = document_ids.index(
+                st.session_state.active_document
             )
 
-
-        # ====================================================
-        # GENERATE ANSWER
-        # ====================================================
-
-        if not relevant_chunks:
-
-            answer = (
-                "I could not find relevant information "
-                "in the uploaded document."
-            )
-
-
-            source_information = []
-
-
-        else:
-
-            context_parts = []
-
-
-            for result in relevant_chunks:
-
-                chunk_index = result[
-                    "index"
-                ]
-
-
-                chunk_text = result[
-                    "chunk"
-                ]
-
-
-                page_number = chunk_data[
-                    chunk_index
-                ]["page"]
-
-
-                context_parts.append(
-                    f"""
-Page {page_number}:
-
-{chunk_text}
-"""
-                )
-
-
-            context = "\n\n".join(
-                context_parts
-            )
-
-
-            with st.spinner(
-                "🤖 Generating answer..."
-            ):
-
-                answer = generate_answer(
-                    question,
-                    context,
-                    chat_history
-                )
-
-
-            source_information = (
-                relevant_chunks
-            )
-
-
-        # ====================================================
-        # DISPLAY ANSWER
-        # ====================================================
-
-        with st.chat_message(
-            "assistant"
-        ):
-
-            st.markdown(
-                answer
-            )
-
-
-            # ------------------------------------------------
-            # SOURCES
-            # ------------------------------------------------
-
-            if source_information:
-
-                st.markdown(
-                    "### 📚 Sources"
-                )
-
-
-                for rank, result in enumerate(
-                    source_information,
-                    start=1
-                ):
-
-                    chunk_index = result[
-                        "index"
-                    ]
-
-
-                    similarity = result[
-                        "score"
-                    ]
-
-
-                    page_number = chunk_data[
-                        chunk_index
-                    ]["page"]
-
-
-                    st.markdown(
-                        f"""
-**Source {rank}**
-
-- 📄 Page: {page_number}
-- 🧩 Chunk: {chunk_index + 1}
-- 🎯 Similarity: {similarity:.4f}
-"""
-                    )
-
-
-        # ====================================================
-        # STORE ASSISTANT RESPONSE
-        # ====================================================
-
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer
-            }
+        selected_document_name = st.selectbox(
+            "Select document",
+            document_names,
+            index=selected_index
         )
 
+        selected_document_id = document_ids[
+            document_names.index(
+                selected_document_name
+            )
+        ]
 
-    # ========================================================
-    # FEATURE 10 — CLEAR CONVERSATION
-    # ========================================================
+        if (
+            selected_document_id
+            != st.session_state.active_document
+        ):
 
-    if st.session_state.get("messages"):
+            st.session_state.active_document = (
+                selected_document_id
+            )
+
+            st.session_state.chat_history = []
+
+            st.session_state.study_results = {}
+
+            st.rerun()
+
+        st.success(
+            f"Active: {selected_document_name}"
+        )
 
         st.divider()
 
-
         st.subheader(
-            "🧹 Conversation Controls"
+            "🗑️ Remove Document"
         )
 
+        document_to_remove = st.selectbox(
+            "Select document to remove",
+            document_names,
+            key="remove_document"
+        )
 
         if st.button(
-            "🗑️ Clear Conversation"
+            "🗑️ Remove Selected Document",
+            use_container_width=True
         ):
 
-            st.session_state.messages = []
+            remove_id = document_ids[
+                document_names.index(
+                    document_to_remove
+                )
+            ]
+
+            del st.session_state.documents[
+                remove_id
+            ]
+
+            if (
+                st.session_state.active_document
+                == remove_id
+            ):
+
+                st.session_state.active_document = (
+                    None
+                )
+
+                st.session_state.chat_history = []
+
+                st.session_state.study_results = {}
+
+            st.success(
+                f"Removed: {document_to_remove}"
+            )
 
             st.rerun()
 
 
-    # ========================================================
-    # FEATURE 9 — EXPORT CONVERSATION
-    # ========================================================
+# ============================================================
+# MAIN TITLE
+# ============================================================
 
-    if st.session_state.get("messages"):
+st.title(
+    "🧠 LocalAI StudyMate"
+)
 
-        st.divider()
-
-
-        st.subheader(
-            "📥 Export Conversation"
-        )
-
-
-        export_lines = []
-
-
-        export_lines.append(
-            "LocalAI StudyMate - Conversation"
-        )
-
-
-        export_lines.append(
-            f"Document: {uploaded_file.name}"
-        )
-
-
-        export_lines.append(
-            "=" * 60
-        )
-
-
-        export_lines.append("")
-
-
-        for message in st.session_state.messages:
-
-            if message["role"] == "user":
-
-                export_lines.append(
-                    "USER:"
-                )
-
-
-                export_lines.append(
-                    message["content"]
-                )
-
-
-                export_lines.append("")
-
-
-            elif message["role"] == "assistant":
-
-                export_lines.append(
-                    "ASSISTANT:"
-                )
-
-
-                export_lines.append(
-                    message["content"]
-                )
-
-
-                export_lines.append("")
-
-
-        export_text = "\n".join(
-            export_lines
-        )
-
-
-        st.download_button(
-            label="📄 Download Conversation",
-            data=export_text,
-            file_name=(
-                "LocalAI_StudyMate_Conversation.txt"
-            ),
-            mime="text/plain"
-        )
+st.caption(
+    "Local PDF-based Conversational RAG "
+    "with Multi-Document Management"
+)
 
 
 # ============================================================
-# NO PDF UPLOADED
+# CHECK ACTIVE DOCUMENT
 # ============================================================
 
-else:
+if not st.session_state.documents:
 
     st.info(
-        "👆 Upload a PDF to start asking questions."
+        "👈 Upload one or more PDF documents "
+        "from the sidebar to get started."
+    )
+
+    st.stop()
+
+
+if (
+    st.session_state.active_document
+    not in st.session_state.documents
+):
+
+    st.info(
+        "👈 Select a document from the sidebar."
+    )
+
+    st.stop()
+
+
+# ============================================================
+# ACTIVE DOCUMENT DATA
+# ============================================================
+
+active_document = st.session_state.documents[
+    st.session_state.active_document
+]
+
+active_document_name = active_document[
+    "name"
+]
+
+chunks = active_document[
+    "chunks"
+]
+
+document_embeddings = active_document[
+    "embeddings"
+]
+
+
+# ============================================================
+# ACTIVE DOCUMENT INFORMATION
+# ============================================================
+
+st.success(
+    f"📖 Currently chatting with: "
+    f"**{active_document_name}**"
+)
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+
+    st.metric(
+        "Pages",
+        len(
+            active_document["pages"]
+        )
+    )
+
+with col2:
+
+    st.metric(
+        "Chunks",
+        len(chunks)
+    )
+
+with col3:
+
+    st.metric(
+        "Documents",
+        len(
+            st.session_state.documents
+        )
+    )
+
+
+st.divider()
+
+
+# ============================================================
+# CHAT HISTORY
+# ============================================================
+
+for message in st.session_state.chat_history:
+
+    role = message["role"]
+
+    content = message["content"]
+
+    with st.chat_message(role):
+
+        st.markdown(content)
+
+
+# ============================================================
+# QUESTION INPUT
+# ============================================================
+
+question = st.chat_input(
+    "Ask a question about the selected PDF..."
+)
+
+
+if question:
+
+    question = question.strip()
+
+    if not question:
+
+        st.warning(
+            "Please enter a question."
+        )
+
+        st.stop()
+
+    with st.chat_message("user"):
+
+        st.markdown(question)
+
+    st.session_state.chat_history.append(
+        {
+            "role": "user",
+            "content": question
+        }
+    )
+
+    # --------------------------------------------------------
+    # RECENT CHAT HISTORY
+    # --------------------------------------------------------
+
+    recent_history = ""
+
+    for message in st.session_state.chat_history[-6:]:
+
+        recent_history += (
+            f"{message['role']}: "
+            f"{message['content']}\n"
+        )
+
+    # --------------------------------------------------------
+    # QUERY REWRITING
+    # --------------------------------------------------------
+
+    with st.spinner(
+        "Understanding your question..."
+    ):
+
+        try:
+
+            rewritten_query = generate_search_query(
+                question,
+                recent_history
+            )
+
+        except Exception:
+
+            rewritten_query = question
+
+    with st.expander(
+        "🔎 Retrieval Query"
+    ):
+
+        st.write(
+            rewritten_query
+        )
+
+    # --------------------------------------------------------
+    # RETRIEVAL
+    # --------------------------------------------------------
+
+    with st.spinner(
+        "Searching the selected document..."
+    ):
+
+        results = retrieve_relevant_chunks(
+
+            rewritten_query,
+
+            chunks,
+
+            document_embeddings,
+
+            embedding_model,
+
+            top_k=3,
+
+            similarity_threshold=0.30
+        )
+
+    # --------------------------------------------------------
+    # GENERATE ANSWER
+    # --------------------------------------------------------
+
+    if not results:
+
+        answer = (
+            "I could not find enough relevant "
+            "information in the selected document "
+            "to answer this question."
+        )
+
+        source_results = []
+
+    else:
+
+        context_parts = []
+
+        source_results = []
+
+        for result in results:
+
+            chunk_index = result["index"]
+
+            score = result["score"]
+
+            chunk_data = chunks[
+                chunk_index
+            ]
+
+            page_number = chunk_data[
+                "page"
+            ]
+
+            chunk_text = chunk_data[
+                "chunk"
+            ]
+
+            context_parts.append(
+
+                f"[Page {page_number}]\n"
+                f"{chunk_text}"
+
+            )
+
+            source_results.append(
+                {
+                    "page": page_number,
+                    "chunk_index": chunk_index,
+                    "score": score
+                }
+            )
+
+        context = "\n\n".join(
+            context_parts
+        )
+
+        with st.spinner(
+            "Generating AI answer..."
+        ):
+
+            try:
+
+                answer = generate_answer(
+
+                    question,
+
+                    context,
+
+                    recent_history
+
+                )
+
+            except Exception as e:
+
+                answer = (
+                    f"Error generating answer: {e}"
+                )
+
+    # --------------------------------------------------------
+    # DISPLAY ANSWER
+    # --------------------------------------------------------
+
+    with st.chat_message("assistant"):
+
+        st.markdown(answer)
+
+    st.session_state.chat_history.append(
+        {
+            "role": "assistant",
+            "content": answer
+        }
+    )
+
+    # --------------------------------------------------------
+    # SOURCES
+    # --------------------------------------------------------
+
+    if source_results:
+
+        with st.expander(
+            "📚 Sources Used"
+        ):
+
+            for source in source_results:
+
+                st.write(
+                    f"**Page "
+                    f"{source['page']}** — "
+                    f"Chunk "
+                    f"{source['chunk_index'] + 1} "
+                    f"— Similarity: "
+                    f"{source['score']:.4f}"
+                )
+
+
+# ============================================================
+# CONVERSATION CONTROLS
+# ============================================================
+
+st.divider()
+
+control_col1, control_col2 = st.columns(2)
+
+
+with control_col1:
+
+    if st.button(
+        "🗑️ Clear Conversation",
+        use_container_width=True
+    ):
+
+        st.session_state.chat_history = []
+
+        st.success(
+            "Conversation cleared."
+        )
+
+        st.rerun()
+
+
+with control_col2:
+
+    if st.session_state.chat_history:
+
+        conversation_text = ""
+
+        for message in st.session_state.chat_history:
+
+            role = message["role"].upper()
+
+            content = message["content"]
+
+            conversation_text += (
+                f"{role}\n"
+                f"{content}\n\n"
+            )
+
+        st.download_button(
+
+            label="📥 Export Conversation",
+
+            data=conversation_text,
+
+            file_name=(
+                "LocalAI_StudyMate_"
+                "Conversation.txt"
+            ),
+
+            mime="text/plain",
+
+            use_container_width=True
+
+        )
+
+
+# ============================================================
+# STUDY MODE
+# ============================================================
+
+st.divider()
+
+st.header(
+    "📖 Study Mode"
+)
+
+st.write(
+    "Generate study material from the "
+    "currently selected document."
+)
+
+
+# ------------------------------------------------------------
+# STUDY TYPE SELECTION
+# ------------------------------------------------------------
+
+study_type = st.selectbox(
+
+    "Select Study Material Type",
+
+    [
+        "Summary",
+        "Key Points",
+        "Study Questions",
+        "Important Definitions",
+        "Generate All"
+    ],
+
+    key="study_type"
+)
+
+
+if st.button(
+    "📝 Generate Study Material",
+    use_container_width=True
+):
+
+    all_text = "\n\n".join(
+
+        item["chunk"]
+        for item in chunks
+
+    )
+
+    with st.spinner(
+        "Generating study material..."
+    ):
+
+        try:
+
+            # Clear previous results
+            st.session_state.study_results = {}
+
+
+            # ------------------------------------------------
+            # SUMMARY
+            # ------------------------------------------------
+
+            if study_type in [
+                "Summary",
+                "Generate All"
+            ]:
+
+                st.session_state.study_results[
+                    "summary"
+                ] = generate_summary(
+                    all_text
+                )
+
+
+            # ------------------------------------------------
+            # KEY POINTS
+            # ------------------------------------------------
+
+            if study_type in [
+                "Key Points",
+                "Generate All"
+            ]:
+
+                st.session_state.study_results[
+                    "key_points"
+                ] = generate_key_points(
+                    all_text
+                )
+
+
+            # ------------------------------------------------
+            # STUDY QUESTIONS
+            # ------------------------------------------------
+
+            if study_type in [
+                "Study Questions",
+                "Generate All"
+            ]:
+
+                st.session_state.study_results[
+                    "questions"
+                ] = generate_study_questions(
+                    all_text
+                )
+
+
+            # ------------------------------------------------
+            # DEFINITIONS
+            # ------------------------------------------------
+
+            if study_type in [
+                "Important Definitions",
+                "Generate All"
+            ]:
+
+                st.session_state.study_results[
+                    "definitions"
+                ] = generate_definitions(
+                    all_text
+                )
+
+
+            st.success(
+                f"{study_type} generated successfully!"
+            )
+
+        except Exception as e:
+
+            st.error(
+                f"Could not generate "
+                f"study material: {e}"
+            )
+
+
+# ============================================================
+# DISPLAY STUDY RESULTS
+# ============================================================
+
+if st.session_state.study_results:
+
+    results = st.session_state.study_results
+
+
+    if "summary" in results:
+
+        with st.expander(
+            "📌 Summary",
+            expanded=True
+        ):
+
+            st.markdown(
+                results["summary"]
+            )
+
+
+    if "key_points" in results:
+
+        with st.expander(
+            "🔑 Key Points",
+            expanded=True
+        ):
+
+            st.markdown(
+                results["key_points"]
+            )
+
+
+    if "questions" in results:
+
+        with st.expander(
+            "❓ Study Questions",
+            expanded=True
+        ):
+
+            st.markdown(
+                results["questions"]
+            )
+
+
+    if "definitions" in results:
+
+        with st.expander(
+            "📖 Important Definitions",
+            expanded=True
+        ):
+
+            st.markdown(
+                results["definitions"]
+            )
+
+
+    # --------------------------------------------------------
+    # PDF DOWNLOAD
+    # --------------------------------------------------------
+
+    study_pdf = create_study_material_pdf(
+
+        active_document_name,
+
+        results
+
+    )
+
+    st.download_button(
+
+        label=(
+            "📥 Download Study Material as PDF"
+        ),
+
+        data=study_pdf,
+
+        file_name=(
+            "LocalAI_StudyMate_"
+            "Study_Material.pdf"
+        ),
+
+        mime="application/pdf",
+
+        use_container_width=True
+
     )
 
 
@@ -1229,13 +1106,11 @@ else:
 
 st.divider()
 
-
 st.caption(
-    "LocalAI StudyMate | "
-    "PDF → Page-aware Chunks → Embeddings → "
+    "PDF → Multi-Document Management → "
+    "Page-aware Chunks → Embeddings → "
     "Semantic Search → Conversational RAG → "
-    "Caching → Query Rewriting → "
-    "Similarity Filtering → Page Citations → "
+    "Query Rewriting → Page Citations → "
     "Study Mode → PDF Study Material → "
     "Conversation Export → Clear Conversation → "
     "AI Answer"
