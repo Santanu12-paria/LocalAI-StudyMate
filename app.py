@@ -1,5 +1,6 @@
 import streamlit as st
 import hashlib
+from io import BytesIO
 
 from src.pdf_processor import (
     extract_text_from_pdf,
@@ -71,30 +72,25 @@ embedding_model = load_embedding_model()
 @st.cache_data(show_spinner=False)
 def process_document(pdf_bytes):
 
-    # Extract complete text
     full_text, page_count = extract_text_from_pdf(
         pdf_bytes
     )
 
-    # Extract individual pages
     pages = extract_pages_from_pdf(
         pdf_bytes
     )
 
-    # Split pages into chunks
     chunk_data = split_pages_into_chunks(
         pages,
         chunk_size=1000,
         overlap=200
     )
 
-    # Get only chunk text
     chunks = [
         item["chunk"]
         for item in chunk_data
     ]
 
-    # Create embeddings
     document_embeddings = create_embeddings(
         chunks,
         embedding_model
@@ -107,6 +103,243 @@ def process_document(pdf_bytes):
         chunks,
         document_embeddings
     )
+
+
+# ============================================================
+# FEATURE 12 — CREATE STUDY MATERIAL PDF
+# ============================================================
+
+def create_study_material_pdf(
+    document_name,
+    study_results
+):
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer
+    )
+    from xml.sax.saxutils import escape
+
+
+    pdf_buffer = BytesIO()
+
+
+    document = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=A4,
+        rightMargin=50,
+        leftMargin=50,
+        topMargin=50,
+        bottomMargin=50
+    )
+
+
+    styles = getSampleStyleSheet()
+
+
+    title_style = styles["Title"]
+
+    title_style.alignment = TA_CENTER
+
+
+    heading_style = styles["Heading1"]
+
+    body_style = styles["BodyText"]
+
+
+    story = []
+
+
+    # ========================================================
+    # PDF TITLE
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "LocalAI StudyMate",
+            title_style
+        )
+    )
+
+
+    story.append(
+        Spacer(1, 12)
+    )
+
+
+    story.append(
+        Paragraph(
+            "Generated Study Material",
+            styles["Heading2"]
+        )
+    )
+
+
+    story.append(
+        Spacer(1, 12)
+    )
+
+
+    safe_document_name = escape(
+        document_name
+    )
+
+
+    story.append(
+        Paragraph(
+            f"<b>Document:</b> {safe_document_name}",
+            body_style
+        )
+    )
+
+
+    story.append(
+        Spacer(1, 20)
+    )
+
+
+    # ========================================================
+    # STUDY MATERIAL SECTIONS
+    # ========================================================
+
+    sections = [
+        (
+            "Summary",
+            "summary"
+        ),
+        (
+            "Key Points",
+            "key_points"
+        ),
+        (
+            "Study Questions",
+            "questions"
+        ),
+        (
+            "Important Definitions",
+            "definitions"
+        )
+    ]
+
+
+    for title, key in sections:
+
+        if key not in study_results:
+            continue
+
+
+        story.append(
+            Paragraph(
+                title,
+                heading_style
+            )
+        )
+
+
+        story.append(
+            Spacer(1, 8)
+        )
+
+
+        content = study_results[key]
+
+
+        lines = content.split("\n")
+
+
+        for line in lines:
+
+            line = line.strip()
+
+
+            if not line:
+
+                story.append(
+                    Spacer(1, 6)
+                )
+
+                continue
+
+
+            # Remove Markdown heading symbols
+
+            if line.startswith("### "):
+
+                line = line[4:]
+
+
+            elif line.startswith("## "):
+
+                line = line[3:]
+
+
+            elif line.startswith("# "):
+
+                line = line[2:]
+
+
+            # Convert Markdown bullets
+
+            elif line.startswith("- "):
+
+                line = "• " + line[2:]
+
+
+            elif line.startswith("* "):
+
+                line = "• " + line[2:]
+
+
+            # Escape special HTML characters
+
+            clean_line = escape(
+                line
+            )
+
+
+            # Convert bullet symbol to PDF entity
+
+            clean_line = clean_line.replace(
+                "•",
+                "&#8226;"
+            )
+
+
+            story.append(
+                Paragraph(
+                    clean_line,
+                    body_style
+                )
+            )
+
+
+            story.append(
+                Spacer(1, 4)
+            )
+
+
+        story.append(
+            Spacer(1, 15)
+        )
+
+
+    # ========================================================
+    # BUILD PDF
+    # ========================================================
+
+    document.build(
+        story
+    )
+
+
+    pdf_buffer.seek(0)
+
+
+    return pdf_buffer.getvalue()
 
 
 # ============================================================
@@ -125,34 +358,26 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    # --------------------------------------------------------
-    # Read PDF
-    # --------------------------------------------------------
-
     pdf_bytes = uploaded_file.getvalue()
 
 
-    # --------------------------------------------------------
-    # Create unique document ID
-    # --------------------------------------------------------
+    # ========================================================
+    # DOCUMENT ID
+    # ========================================================
 
     document_id = hashlib.sha256(
         pdf_bytes
     ).hexdigest()
 
 
-    # --------------------------------------------------------
-    # Create cache key
-    # --------------------------------------------------------
-
     cache_key = (
         f"document_cache_{document_id}"
     )
 
 
-    # --------------------------------------------------------
-    # Check whether document is already cached
-    # --------------------------------------------------------
+    # ========================================================
+    # DOCUMENT CACHE
+    # ========================================================
 
     if cache_key in st.session_state:
 
@@ -164,15 +389,13 @@ if uploaded_file is not None:
             document_embeddings
         ) = st.session_state[cache_key]
 
+
         cache_status = (
             "⚡ Loaded from document cache"
         )
 
-    else:
 
-        # ----------------------------------------------------
-        # Process PDF
-        # ----------------------------------------------------
+    else:
 
         with st.spinner(
             "🔄 Processing your PDF..."
@@ -188,9 +411,6 @@ if uploaded_file is not None:
                 pdf_bytes
             )
 
-        # ----------------------------------------------------
-        # Save processed document in session
-        # ----------------------------------------------------
 
         st.session_state[cache_key] = (
             full_text,
@@ -199,6 +419,7 @@ if uploaded_file is not None:
             chunks,
             document_embeddings
         )
+
 
         cache_status = (
             "✅ Document processed and cached"
@@ -216,13 +437,10 @@ if uploaded_file is not None:
 
     if previous_document_id != document_id:
 
-        # Clear previous conversation
         st.session_state.messages = []
 
-        # Clear previous Study Mode results
         st.session_state.study_results = {}
 
-        # Store current document
         st.session_state.current_document_id = (
             document_id
         )
@@ -285,6 +503,7 @@ if uploaded_file is not None:
 
             embedding_size = 0
 
+
         st.metric(
             "Embedding Size",
             embedding_size
@@ -297,9 +516,11 @@ if uploaded_file is not None:
 
     st.divider()
 
+
     st.subheader(
         "📚 Study Mode"
     )
+
 
     st.write(
         "Generate study material from your uploaded PDF "
@@ -307,9 +528,9 @@ if uploaded_file is not None:
     )
 
 
-    # --------------------------------------------------------
-    # Study Mode options
-    # --------------------------------------------------------
+    # ========================================================
+    # STUDY MODE BUTTONS
+    # ========================================================
 
     study_col1, study_col2 = st.columns(2)
 
@@ -348,9 +569,9 @@ if uploaded_file is not None:
         )
 
 
-    # --------------------------------------------------------
-    # Initialize Study Mode session state
-    # --------------------------------------------------------
+    # ========================================================
+    # INITIALIZE STUDY RESULTS
+    # ========================================================
 
     if "study_results" not in st.session_state:
 
@@ -358,7 +579,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # GENERATE SUMMARY
+    # SUMMARY
     # ========================================================
 
     if summary_button:
@@ -371,13 +592,14 @@ if uploaded_file is not None:
                 full_text
             )
 
+
         st.session_state.study_results[
             "summary"
         ] = summary
 
 
     # ========================================================
-    # GENERATE KEY POINTS
+    # KEY POINTS
     # ========================================================
 
     if key_points_button:
@@ -390,13 +612,14 @@ if uploaded_file is not None:
                 full_text
             )
 
+
         st.session_state.study_results[
             "key_points"
         ] = key_points
 
 
     # ========================================================
-    # GENERATE STUDY QUESTIONS
+    # STUDY QUESTIONS
     # ========================================================
 
     if questions_button:
@@ -411,13 +634,14 @@ if uploaded_file is not None:
                 )
             )
 
+
         st.session_state.study_results[
             "questions"
         ] = study_questions
 
 
     # ========================================================
-    # GENERATE DEFINITIONS
+    # DEFINITIONS
     # ========================================================
 
     if definitions_button:
@@ -429,6 +653,7 @@ if uploaded_file is not None:
             definitions = generate_definitions(
                 full_text
             )
+
 
         st.session_state.study_results[
             "definitions"
@@ -442,6 +667,7 @@ if uploaded_file is not None:
     if st.session_state.study_results:
 
         st.divider()
+
 
         st.markdown(
             "## 📚 Generated Study Material"
@@ -520,6 +746,45 @@ if uploaded_file is not None:
                 )
 
 
+        # ====================================================
+        # FEATURE 12 — DOWNLOAD AS PDF
+        # ====================================================
+
+        st.divider()
+
+
+        st.markdown(
+            "### 📥 Download Study Material"
+        )
+
+
+        st.write(
+            "Download your generated study material "
+            "as a PDF file."
+        )
+
+
+        with st.spinner(
+            "📄 Preparing PDF..."
+        ):
+
+            study_pdf = create_study_material_pdf(
+                uploaded_file.name,
+                st.session_state.study_results
+            )
+
+
+        st.download_button(
+            label="📥 Download Study Material as PDF",
+            data=study_pdf,
+            file_name=(
+                "LocalAI_StudyMate_Study_Material.pdf"
+            ),
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+
     # ========================================================
     # EXTRACTED TEXT
     # ========================================================
@@ -552,9 +817,11 @@ if uploaded_file is not None:
                 f"**Chunk {index} — Page {item['page']}**"
             )
 
+
             st.write(
                 item["chunk"]
             )
+
 
             st.divider()
 
@@ -567,10 +834,6 @@ if uploaded_file is not None:
 
         st.session_state.messages = []
 
-
-    # --------------------------------------------------------
-    # Display previous messages
-    # --------------------------------------------------------
 
     for message in st.session_state.messages:
 
@@ -608,7 +871,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Store question
+        # Save user question
         # ----------------------------------------------------
 
         st.session_state.messages.append(
@@ -637,6 +900,7 @@ if uploaded_file is not None:
 
             content = message["content"]
 
+
             chat_history_parts.append(
                 f"{role}: {content}"
             )
@@ -661,10 +925,6 @@ if uploaded_file is not None:
             )
 
 
-        # ----------------------------------------------------
-        # Show rewritten query
-        # ----------------------------------------------------
-
         if (
             search_query.strip()
             != question.strip()
@@ -678,6 +938,7 @@ if uploaded_file is not None:
                     "**Original Question:**"
                 )
 
+
                 st.write(
                     question
                 )
@@ -686,6 +947,7 @@ if uploaded_file is not None:
                 st.markdown(
                     "**Rewritten Search Query:**"
                 )
+
 
                 st.write(
                     search_query
@@ -712,7 +974,7 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # NO RELEVANT CHUNKS
+        # GENERATE ANSWER
         # ====================================================
 
         if not relevant_chunks:
@@ -722,14 +984,11 @@ if uploaded_file is not None:
                 "in the uploaded document."
             )
 
+
             source_information = []
 
 
         else:
-
-            # ------------------------------------------------
-            # Build context
-            # ------------------------------------------------
 
             context_parts = []
 
@@ -740,9 +999,11 @@ if uploaded_file is not None:
                     "index"
                 ]
 
+
                 chunk_text = result[
                     "chunk"
                 ]
+
 
                 page_number = chunk_data[
                     chunk_index
@@ -762,10 +1023,6 @@ Page {page_number}:
                 context_parts
             )
 
-
-            # =================================================
-            # GENERATE ANSWER
-            # =================================================
 
             with st.spinner(
                 "🤖 Generating answer..."
@@ -797,7 +1054,7 @@ Page {page_number}:
 
 
             # ------------------------------------------------
-            # SOURCE CITATIONS
+            # SOURCES
             # ------------------------------------------------
 
             if source_information:
@@ -816,9 +1073,11 @@ Page {page_number}:
                         "index"
                     ]
 
+
                     similarity = result[
                         "score"
                     ]
+
 
                     page_number = chunk_data[
                         chunk_index
@@ -856,6 +1115,7 @@ Page {page_number}:
 
         st.divider()
 
+
         st.subheader(
             "🧹 Conversation Controls"
         )
@@ -877,6 +1137,7 @@ Page {page_number}:
     if st.session_state.get("messages"):
 
         st.divider()
+
 
         st.subheader(
             "📥 Export Conversation"
@@ -904,10 +1165,6 @@ Page {page_number}:
         export_lines.append("")
 
 
-        # ----------------------------------------------------
-        # Add messages
-        # ----------------------------------------------------
-
         for message in st.session_state.messages:
 
             if message["role"] == "user":
@@ -916,9 +1173,11 @@ Page {page_number}:
                     "USER:"
                 )
 
+
                 export_lines.append(
                     message["content"]
                 )
+
 
                 export_lines.append("")
 
@@ -929,25 +1188,19 @@ Page {page_number}:
                     "ASSISTANT:"
                 )
 
+
                 export_lines.append(
                     message["content"]
                 )
 
+
                 export_lines.append("")
 
-
-        # ----------------------------------------------------
-        # Create export text
-        # ----------------------------------------------------
 
         export_text = "\n".join(
             export_lines
         )
 
-
-        # ----------------------------------------------------
-        # Download button
-        # ----------------------------------------------------
 
         st.download_button(
             label="📄 Download Conversation",
@@ -976,12 +1229,14 @@ else:
 
 st.divider()
 
+
 st.caption(
     "LocalAI StudyMate | "
     "PDF → Page-aware Chunks → Embeddings → "
     "Semantic Search → Conversational RAG → "
     "Caching → Query Rewriting → "
     "Similarity Filtering → Page Citations → "
-    "Study Mode → Conversation Export → "
-    "Clear Conversation → AI Answer"
+    "Study Mode → PDF Study Material → "
+    "Conversation Export → Clear Conversation → "
+    "AI Answer"
 )
