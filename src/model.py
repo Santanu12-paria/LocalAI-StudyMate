@@ -3,14 +3,16 @@ import requests
 
 def generate_answer(
     question,
-    context
+    context,
+    chat_history=""
 ):
     """
     Generate an answer using the local Ollama model.
 
     Parameters:
-        question: User's question
+        question: Current user question
         context: Relevant text retrieved from the PDF
+        chat_history: Previous conversation
 
     Returns:
         AI-generated answer
@@ -19,20 +21,29 @@ def generate_answer(
     prompt = f"""
 You are a helpful study assistant.
 
-Answer the user's question using ONLY the
-information provided in the context below.
+Answer the user's current question using ONLY
+the information provided in the document context.
 
-If the answer is not available in the context,
+You may use the previous conversation to understand
+what the user is referring to.
+
+If the current question depends on previous conversation,
+use that conversation to understand the reference.
+
+If the answer is not available in the document context,
 say:
 
 "I could not find the answer in the uploaded document."
 
 Do not make up information.
 
-Context:
+Previous Conversation:
+{chat_history}
+
+Document Context:
 {context}
 
-Question:
+Current Question:
 {question}
 
 Answer:
