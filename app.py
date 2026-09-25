@@ -14,7 +14,11 @@ from src.rag import (
 
 from src.model import (
     generate_answer,
-    generate_search_query
+    generate_search_query,
+    generate_summary,
+    generate_key_points,
+    generate_study_questions,
+    generate_definitions
 )
 
 
@@ -67,54 +71,34 @@ embedding_model = load_embedding_model()
 @st.cache_data(show_spinner=False)
 def process_document(pdf_bytes):
 
-    # --------------------------------------------------------
     # Extract complete text
-    # --------------------------------------------------------
-
     full_text, page_count = extract_text_from_pdf(
         pdf_bytes
     )
 
-
-    # --------------------------------------------------------
-    # Extract pages separately
-    # --------------------------------------------------------
-
+    # Extract individual pages
     pages = extract_pages_from_pdf(
         pdf_bytes
     )
 
-
-    # --------------------------------------------------------
     # Split pages into chunks
-    # --------------------------------------------------------
-
     chunk_data = split_pages_into_chunks(
         pages,
         chunk_size=1000,
         overlap=200
     )
 
-
-    # --------------------------------------------------------
-    # Extract chunk text
-    # --------------------------------------------------------
-
+    # Get only chunk text
     chunks = [
         item["chunk"]
         for item in chunk_data
     ]
 
-
-    # --------------------------------------------------------
     # Create embeddings
-    # --------------------------------------------------------
-
     document_embeddings = create_embeddings(
         chunks,
         embedding_model
     )
-
 
     return (
         full_text,
@@ -142,7 +126,7 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
 
     # --------------------------------------------------------
-    # Read PDF bytes
+    # Read PDF
     # --------------------------------------------------------
 
     pdf_bytes = uploaded_file.getvalue()
@@ -158,7 +142,7 @@ if uploaded_file is not None:
 
 
     # --------------------------------------------------------
-    # Cache key
+    # Create cache key
     # --------------------------------------------------------
 
     cache_key = (
@@ -167,7 +151,7 @@ if uploaded_file is not None:
 
 
     # --------------------------------------------------------
-    # Check document cache
+    # Check whether document is already cached
     # --------------------------------------------------------
 
     if cache_key in st.session_state:
@@ -184,11 +168,10 @@ if uploaded_file is not None:
             "⚡ Loaded from document cache"
         )
 
-
     else:
 
         # ----------------------------------------------------
-        # Process document
+        # Process PDF
         # ----------------------------------------------------
 
         with st.spinner(
@@ -205,9 +188,8 @@ if uploaded_file is not None:
                 pdf_bytes
             )
 
-
         # ----------------------------------------------------
-        # Store processed document in session cache
+        # Save processed document in session
         # ----------------------------------------------------
 
         st.session_state[cache_key] = (
@@ -224,7 +206,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # DETECT NEW DOCUMENT
+    # NEW DOCUMENT DETECTION
     # ========================================================
 
     previous_document_id = st.session_state.get(
@@ -234,12 +216,13 @@ if uploaded_file is not None:
 
     if previous_document_id != document_id:
 
-        # ----------------------------------------------------
-        # Clear old conversation for a new PDF
-        # ----------------------------------------------------
-
+        # Clear previous conversation
         st.session_state.messages = []
 
+        # Clear previous Study Mode results
+        st.session_state.study_results = {}
+
+        # Store current document
         st.session_state.current_document_id = (
             document_id
         )
@@ -302,11 +285,239 @@ if uploaded_file is not None:
 
             embedding_size = 0
 
-
         st.metric(
             "Embedding Size",
             embedding_size
         )
+
+
+    # ========================================================
+    # FEATURE 11 — STUDY MODE
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "📚 Study Mode"
+    )
+
+    st.write(
+        "Generate study material from your uploaded PDF "
+        "using the local AI model."
+    )
+
+
+    # --------------------------------------------------------
+    # Study Mode options
+    # --------------------------------------------------------
+
+    study_col1, study_col2 = st.columns(2)
+
+    study_col3, study_col4 = st.columns(2)
+
+
+    with study_col1:
+
+        summary_button = st.button(
+            "📝 Summary",
+            use_container_width=True
+        )
+
+
+    with study_col2:
+
+        key_points_button = st.button(
+            "🔑 Key Points",
+            use_container_width=True
+        )
+
+
+    with study_col3:
+
+        questions_button = st.button(
+            "❓ Study Questions",
+            use_container_width=True
+        )
+
+
+    with study_col4:
+
+        definitions_button = st.button(
+            "📖 Important Definitions",
+            use_container_width=True
+        )
+
+
+    # --------------------------------------------------------
+    # Initialize Study Mode session state
+    # --------------------------------------------------------
+
+    if "study_results" not in st.session_state:
+
+        st.session_state.study_results = {}
+
+
+    # ========================================================
+    # GENERATE SUMMARY
+    # ========================================================
+
+    if summary_button:
+
+        with st.spinner(
+            "📝 Generating summary..."
+        ):
+
+            summary = generate_summary(
+                full_text
+            )
+
+        st.session_state.study_results[
+            "summary"
+        ] = summary
+
+
+    # ========================================================
+    # GENERATE KEY POINTS
+    # ========================================================
+
+    if key_points_button:
+
+        with st.spinner(
+            "🔑 Generating key points..."
+        ):
+
+            key_points = generate_key_points(
+                full_text
+            )
+
+        st.session_state.study_results[
+            "key_points"
+        ] = key_points
+
+
+    # ========================================================
+    # GENERATE STUDY QUESTIONS
+    # ========================================================
+
+    if questions_button:
+
+        with st.spinner(
+            "❓ Generating study questions..."
+        ):
+
+            study_questions = (
+                generate_study_questions(
+                    full_text
+                )
+            )
+
+        st.session_state.study_results[
+            "questions"
+        ] = study_questions
+
+
+    # ========================================================
+    # GENERATE DEFINITIONS
+    # ========================================================
+
+    if definitions_button:
+
+        with st.spinner(
+            "📖 Generating important definitions..."
+        ):
+
+            definitions = generate_definitions(
+                full_text
+            )
+
+        st.session_state.study_results[
+            "definitions"
+        ] = definitions
+
+
+    # ========================================================
+    # DISPLAY STUDY RESULTS
+    # ========================================================
+
+    if st.session_state.study_results:
+
+        st.divider()
+
+        st.markdown(
+            "## 📚 Generated Study Material"
+        )
+
+
+        # ----------------------------------------------------
+        # Summary
+        # ----------------------------------------------------
+
+        if "summary" in st.session_state.study_results:
+
+            with st.expander(
+                "📝 Summary",
+                expanded=True
+            ):
+
+                st.markdown(
+                    st.session_state.study_results[
+                        "summary"
+                    ]
+                )
+
+
+        # ----------------------------------------------------
+        # Key Points
+        # ----------------------------------------------------
+
+        if "key_points" in st.session_state.study_results:
+
+            with st.expander(
+                "🔑 Key Points",
+                expanded=True
+            ):
+
+                st.markdown(
+                    st.session_state.study_results[
+                        "key_points"
+                    ]
+                )
+
+
+        # ----------------------------------------------------
+        # Study Questions
+        # ----------------------------------------------------
+
+        if "questions" in st.session_state.study_results:
+
+            with st.expander(
+                "❓ Study Questions",
+                expanded=True
+            ):
+
+                st.markdown(
+                    st.session_state.study_results[
+                        "questions"
+                    ]
+                )
+
+
+        # ----------------------------------------------------
+        # Important Definitions
+        # ----------------------------------------------------
+
+        if "definitions" in st.session_state.study_results:
+
+            with st.expander(
+                "📖 Important Definitions",
+                expanded=True
+            ):
+
+                st.markdown(
+                    st.session_state.study_results[
+                        "definitions"
+                    ]
+                )
 
 
     # ========================================================
@@ -325,7 +536,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # VIEW CHUNKS
+    # VIEW TEXT CHUNKS
     # ========================================================
 
     with st.expander(
@@ -397,7 +608,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Store user question
+        # Store question
         # ----------------------------------------------------
 
         st.session_state.messages.append(
@@ -437,7 +648,7 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # FEATURE 7 — QUERY REWRITING
+        # QUERY REWRITING
         # ====================================================
 
         with st.spinner(
@@ -501,7 +712,7 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # CHECK RETRIEVAL RESULTS
+        # NO RELEVANT CHUNKS
         # ====================================================
 
         if not relevant_chunks:
@@ -573,7 +784,7 @@ Page {page_number}:
 
 
         # ====================================================
-        # DISPLAY AI RESPONSE
+        # DISPLAY ANSWER
         # ====================================================
 
         with st.chat_message(
@@ -586,7 +797,7 @@ Page {page_number}:
 
 
             # ------------------------------------------------
-            # Source citations
+            # SOURCE CITATIONS
             # ------------------------------------------------
 
             if source_information:
@@ -660,7 +871,7 @@ Page {page_number}:
 
 
     # ========================================================
-    # FEATURE 9 — EXPORT CHAT HISTORY
+    # FEATURE 9 — EXPORT CONVERSATION
     # ========================================================
 
     if st.session_state.get("messages"):
@@ -694,7 +905,7 @@ Page {page_number}:
 
 
         # ----------------------------------------------------
-        # Add conversation messages
+        # Add messages
         # ----------------------------------------------------
 
         for message in st.session_state.messages:
@@ -726,13 +937,17 @@ Page {page_number}:
 
 
         # ----------------------------------------------------
-        # Create downloadable text
+        # Create export text
         # ----------------------------------------------------
 
         export_text = "\n".join(
             export_lines
         )
 
+
+        # ----------------------------------------------------
+        # Download button
+        # ----------------------------------------------------
 
         st.download_button(
             label="📄 Download Conversation",
@@ -767,6 +982,6 @@ st.caption(
     "Semantic Search → Conversational RAG → "
     "Caching → Query Rewriting → "
     "Similarity Filtering → Page Citations → "
-    "Conversation Export → Clear Conversation → "
-    "AI Answer"
+    "Study Mode → Conversation Export → "
+    "Clear Conversation → AI Answer"
 )
