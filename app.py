@@ -97,7 +97,7 @@ def process_document(pdf_bytes):
 
 
     # --------------------------------------------------------
-    # Extract only chunk text for embeddings
+    # Extract chunk text
     # --------------------------------------------------------
 
     chunks = [
@@ -158,7 +158,7 @@ if uploaded_file is not None:
 
 
     # --------------------------------------------------------
-    # Cache key for this document
+    # Cache key
     # --------------------------------------------------------
 
     cache_key = (
@@ -167,7 +167,7 @@ if uploaded_file is not None:
 
 
     # --------------------------------------------------------
-    # Check whether this document is already cached
+    # Check document cache
     # --------------------------------------------------------
 
     if cache_key in st.session_state:
@@ -180,7 +180,9 @@ if uploaded_file is not None:
             document_embeddings
         ) = st.session_state[cache_key]
 
-        cache_status = "⚡ Loaded from document cache"
+        cache_status = (
+            "⚡ Loaded from document cache"
+        )
 
 
     else:
@@ -205,7 +207,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Store processed document in session state
+        # Store in session cache
         # ----------------------------------------------------
 
         st.session_state[cache_key] = (
@@ -216,7 +218,9 @@ if uploaded_file is not None:
             document_embeddings
         )
 
-        cache_status = "✅ Document processed and cached"
+        cache_status = (
+            "✅ Document processed and cached"
+        )
 
 
     # ========================================================
@@ -231,7 +235,7 @@ if uploaded_file is not None:
     if previous_document_id != document_id:
 
         # ----------------------------------------------------
-        # New PDF → clear previous conversation
+        # Clear chat when a different PDF is uploaded
         # ----------------------------------------------------
 
         st.session_state.messages = []
@@ -380,7 +384,7 @@ if uploaded_file is not None:
     if question:
 
         # ----------------------------------------------------
-        # Display user's question
+        # Display user question
         # ----------------------------------------------------
 
         with st.chat_message(
@@ -447,7 +451,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # Show rewritten search query
+        # Show rewritten query
         # ----------------------------------------------------
 
         if (
@@ -513,7 +517,7 @@ if uploaded_file is not None:
         else:
 
             # ------------------------------------------------
-            # Build context for the AI
+            # Build context
             # ------------------------------------------------
 
             context_parts = []
@@ -521,9 +525,13 @@ if uploaded_file is not None:
 
             for result in relevant_chunks:
 
-                chunk_index = result["index"]
+                chunk_index = result[
+                    "index"
+                ]
 
-                chunk_text = result["chunk"]
+                chunk_text = result[
+                    "chunk"
+                ]
 
                 page_number = chunk_data[
                     chunk_index
@@ -629,6 +637,91 @@ Page {page_number}:
         )
 
 
+    # ========================================================
+    # FEATURE 9 — EXPORT CHAT HISTORY
+    # ========================================================
+
+    if st.session_state.get("messages"):
+
+        st.divider()
+
+        st.subheader(
+            "📥 Export Conversation"
+        )
+
+
+        export_lines = []
+
+
+        export_lines.append(
+            "LocalAI StudyMate - Conversation"
+        )
+
+
+        export_lines.append(
+            f"Document: {uploaded_file.name}"
+        )
+
+
+        export_lines.append(
+            "=" * 60
+        )
+
+
+        export_lines.append("")
+
+
+        # ----------------------------------------------------
+        # Add every conversation message
+        # ----------------------------------------------------
+
+        for message in st.session_state.messages:
+
+            if message["role"] == "user":
+
+                export_lines.append(
+                    "USER:"
+                )
+
+                export_lines.append(
+                    message["content"]
+                )
+
+                export_lines.append("")
+
+
+            elif message["role"] == "assistant":
+
+                export_lines.append(
+                    "ASSISTANT:"
+                )
+
+                export_lines.append(
+                    message["content"]
+                )
+
+                export_lines.append("")
+
+
+        # ----------------------------------------------------
+        # Create downloadable text
+        # ----------------------------------------------------
+
+        export_text = "\n".join(
+            export_lines
+        )
+
+
+        st.download_button(
+            label="📄 Download Conversation",
+            data=export_text,
+            file_name=(
+                "LocalAI_StudyMate_Conversation.txt"
+            ),
+            mime="text/plain"
+        )
+
+
 # ============================================================
 # NO PDF UPLOADED
 # ============================================================
@@ -650,5 +743,7 @@ st.caption(
     "LocalAI StudyMate | "
     "PDF → Page-aware Chunks → Embeddings → "
     "Semantic Search → Conversational RAG → "
-    "Caching → Query Rewriting → Page Citations → AI Answer"
+    "Caching → Query Rewriting → "
+    "Similarity Filtering → Page Citations → "
+    "Conversation Export → AI Answer"
 )
