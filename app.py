@@ -1,7 +1,5 @@
-import hashlib
-
 import streamlit as st
-from sentence_transformers import SentenceTransformer
+import hashlib
 
 from src.pdf_processor import (
     extract_text_from_pdf,
@@ -14,7 +12,10 @@ from src.rag import (
     retrieve_relevant_chunks
 )
 
-from src.model import generate_answer
+from src.model import (
+    generate_answer,
+    generate_search_query
+)
 
 
 # ============================================================
@@ -23,8 +24,20 @@ from src.model import generate_answer
 
 st.set_page_config(
     page_title="LocalAI StudyMate",
-    page_icon="🧠",
+    page_icon="📚",
     layout="wide"
+)
+
+
+# ============================================================
+# TITLE
+# ============================================================
+
+st.title("📚 LocalAI StudyMate")
+
+st.write(
+    "Upload a PDF and ask questions using "
+    "a local AI-powered Retrieval-Augmented Generation system."
 )
 
 
@@ -34,6 +47,8 @@ st.set_page_config(
 
 @st.cache_resource
 def load_embedding_model():
+
+    from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(
         "all-MiniLM-L6-v2"
@@ -46,21 +61,14 @@ embedding_model = load_embedding_model()
 
 
 # ============================================================
-# CACHE DOCUMENT PROCESSING
+# DOCUMENT PROCESSING
 # ============================================================
 
 @st.cache_data(show_spinner=False)
 def process_document(pdf_bytes):
 
-    """
-    Process the uploaded PDF and cache the result.
-
-    The same PDF will not need to be extracted,
-    chunked, and embedded again on every Streamlit rerun.
-    """
-
     # --------------------------------------------------------
-    # EXTRACT COMPLETE TEXT
+    # Extract complete text
     # --------------------------------------------------------
 
     full_text, page_count = extract_text_from_pdf(
@@ -69,7 +77,7 @@ def process_document(pdf_bytes):
 
 
     # --------------------------------------------------------
-    # EXTRACT PAGE-WISE TEXT
+    # Extract pages separately
     # --------------------------------------------------------
 
     pages = extract_pages_from_pdf(
@@ -78,7 +86,7 @@ def process_document(pdf_bytes):
 
 
     # --------------------------------------------------------
-    # CREATE PAGE-AWARE CHUNKS
+    # Split pages into chunks
     # --------------------------------------------------------
 
     chunk_data = split_pages_into_chunks(
@@ -89,7 +97,7 @@ def process_document(pdf_bytes):
 
 
     # --------------------------------------------------------
-    # CREATE PLAIN CHUNK LIST
+    # Extract only chunk text for embeddings
     # --------------------------------------------------------
 
     chunks = [
@@ -99,7 +107,7 @@ def process_document(pdf_bytes):
 
 
     # --------------------------------------------------------
-    # CREATE DOCUMENT EMBEDDINGS
+    # Create embeddings
     # --------------------------------------------------------
 
     document_embeddings = create_embeddings(
@@ -107,10 +115,6 @@ def process_document(pdf_bytes):
         embedding_model
     )
 
-
-    # --------------------------------------------------------
-    # RETURN PROCESSED DOCUMENT
-    # --------------------------------------------------------
 
     return (
         full_text,
@@ -122,27 +126,11 @@ def process_document(pdf_bytes):
 
 
 # ============================================================
-# TITLE
+# FILE UPLOADER
 # ============================================================
-
-st.title("🧠 LocalAI StudyMate")
-
-st.write(
-    "An AI-powered study assistant for reading "
-    "and understanding your study materials."
-)
-
-st.divider()
-
-
-# ============================================================
-# PDF UPLOAD
-# ============================================================
-
-st.header("📄 Upload Your Study Material")
 
 uploaded_file = st.file_uploader(
-    "Choose a PDF file",
+    "📄 Upload your PDF",
     type=["pdf"]
 )
 
@@ -153,95 +141,57 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    # ========================================================
-    # READ PDF BYTES
-    # ========================================================
+    # --------------------------------------------------------
+    # Read PDF bytes
+    # --------------------------------------------------------
 
     pdf_bytes = uploaded_file.getvalue()
 
-    if len(pdf_bytes) == 0:
 
-        st.error(
-            "❌ The uploaded PDF is empty."
-        )
-
-        st.stop()
-
-
-    # ========================================================
-    # CREATE UNIQUE DOCUMENT ID
-    # ========================================================
+    # --------------------------------------------------------
+    # Create unique document ID
+    # --------------------------------------------------------
 
     document_id = hashlib.sha256(
         pdf_bytes
     ).hexdigest()
 
 
-    # ========================================================
-    # CHECK FOR NEW DOCUMENT
-    # ========================================================
+    # --------------------------------------------------------
+    # Cache key for this document
+    # --------------------------------------------------------
 
-    if (
-        "document_id" not in st.session_state
-        or
-        st.session_state.document_id != document_id
-    ):
-
-        st.session_state.document_id = document_id
-
-        st.session_state.messages = []
-
-
-    # ========================================================
-    # SHOW UPLOADED FILE
-    # ========================================================
-
-    st.success(
-        f"Uploaded: {uploaded_file.name}"
+    cache_key = (
+        f"document_cache_{document_id}"
     )
 
 
-    # ========================================================
-    # PROCESS / LOAD CACHED DOCUMENT
-    # ========================================================
+    # --------------------------------------------------------
+    # Check whether this document is already cached
+    # --------------------------------------------------------
 
-    try:
+    if cache_key in st.session_state:
+
+        (
+            full_text,
+            page_count,
+            chunk_data,
+            chunks,
+            document_embeddings
+        ) = st.session_state[cache_key]
+
+        cache_status = "⚡ Loaded from document cache"
+
+
+    else:
 
         # ----------------------------------------------------
-        # CHECK WHETHER DOCUMENT IS ALREADY CACHED
+        # Process document
         # ----------------------------------------------------
 
-        cache_key = (
-            f"document_cache_{document_id}"
-        )
-
-        if cache_key not in st.session_state:
-
-            with st.spinner(
-                "Processing PDF and creating embeddings..."
-            ):
-
-                (
-                    full_text,
-                    page_count,
-                    chunk_data,
-                    chunks,
-                    document_embeddings
-                ) = process_document(
-                    pdf_bytes
-                )
-
-            st.session_state[cache_key] = (
-                full_text,
-                page_count,
-                chunk_data,
-                chunks,
-                document_embeddings
-            )
-
-            st.session_state.document_cached = False
-
-        else:
+        with st.spinner(
+            "🔄 Processing your PDF..."
+        ):
 
             (
                 full_text,
@@ -249,36 +199,55 @@ if uploaded_file is not None:
                 chunk_data,
                 chunks,
                 document_embeddings
-            ) = st.session_state[cache_key]
+            ) = process_document(
+                pdf_bytes
+            )
 
-            st.session_state.document_cached = True
 
+        # ----------------------------------------------------
+        # Store processed document in session state
+        # ----------------------------------------------------
 
-    except ValueError as error:
-
-        st.error(
-            f"❌ {error}"
+        st.session_state[cache_key] = (
+            full_text,
+            page_count,
+            chunk_data,
+            chunks,
+            document_embeddings
         )
 
-        st.stop()
+        cache_status = "✅ Document processed and cached"
+
+
+    # ========================================================
+    # DETECT NEW DOCUMENT
+    # ========================================================
+
+    previous_document_id = st.session_state.get(
+        "current_document_id"
+    )
+
+
+    if previous_document_id != document_id:
+
+        # ----------------------------------------------------
+        # New PDF → clear previous conversation
+        # ----------------------------------------------------
+
+        st.session_state.messages = []
+
+        st.session_state.current_document_id = (
+            document_id
+        )
 
 
     # ========================================================
     # CACHE STATUS
     # ========================================================
 
-    if st.session_state.document_cached:
-
-        st.info(
-            "⚡ Document loaded from cache. "
-            "PDF processing and embeddings were reused."
-        )
-
-    else:
-
-        st.success(
-            "✅ Document processed and cached successfully."
-        )
+    st.success(
+        cache_status
+    )
 
 
     # ========================================================
@@ -286,10 +255,12 @@ if uploaded_file is not None:
     # ========================================================
 
     st.subheader(
-        "📚 Document Information"
+        "📊 Document Information"
     )
 
+
     col1, col2, col3, col4 = st.columns(4)
+
 
     with col1:
 
@@ -298,12 +269,14 @@ if uploaded_file is not None:
             page_count
         )
 
+
     with col2:
 
         st.metric(
             "Characters",
             len(full_text)
         )
+
 
     with col3:
 
@@ -312,75 +285,67 @@ if uploaded_file is not None:
             len(chunks)
         )
 
+
     with col4:
+
+        if len(document_embeddings.shape) > 1:
+
+            embedding_size = (
+                document_embeddings.shape[1]
+            )
+
+        else:
+
+            embedding_size = 0
+
 
         st.metric(
             "Embedding Size",
-            document_embeddings.shape[1]
+            embedding_size
         )
-
-
-    st.divider()
 
 
     # ========================================================
     # EXTRACTED TEXT
     # ========================================================
 
-    st.subheader(
-        "📖 Extracted Text"
-    )
-
     with st.expander(
-        "Click to view complete extracted text"
+        "📖 View Extracted Text"
     ):
 
-        st.text(
-            full_text
+        st.text_area(
+            "Complete PDF Text",
+            full_text,
+            height=300
         )
 
 
     # ========================================================
-    # TEXT CHUNKS
+    # VIEW CHUNKS
     # ========================================================
 
-    st.subheader(
-        "🧩 Text Chunks"
-    )
-
-    st.write(
-        f"The document contains {len(chunks)} text chunks."
-    )
-
-
-    for i, item in enumerate(
-        chunk_data,
-        start=1
+    with st.expander(
+        "🧩 View Text Chunks"
     ):
 
-        with st.expander(
-            f"Chunk {i} — Page {item['page']}"
+        for index, item in enumerate(
+            chunk_data,
+            start=1
         ):
+
+            st.markdown(
+                f"**Chunk {index} — Page {item['page']}**"
+            )
 
             st.write(
                 item["chunk"]
             )
 
-
-    st.divider()
-
-
-    # ========================================================
-    # CHAT WITH YOUR STUDY MATERIAL
-    # ========================================================
-
-    st.header(
-        "💬 Chat With Your Study Material"
-    )
+            st.divider()
 
 
     # ========================================================
-    # INITIALIZE CHAT HISTORY
+    # CHAT HISTORY
     # ========================================================
 
     if "messages" not in st.session_state:
@@ -388,9 +353,9 @@ if uploaded_file is not None:
         st.session_state.messages = []
 
 
-    # ========================================================
-    # DISPLAY PREVIOUS CHAT MESSAGES
-    # ========================================================
+    # --------------------------------------------------------
+    # Display previous messages
+    # --------------------------------------------------------
 
     for message in st.session_state.messages:
 
@@ -404,34 +369,32 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # CHAT INPUT
+    # USER QUESTION
     # ========================================================
 
     question = st.chat_input(
-        "Ask a question about your document..."
+        "Ask a question about your PDF..."
     )
 
 
-    # ========================================================
-    # PROCESS USER QUESTION
-    # ========================================================
-
     if question:
 
-        # ====================================================
-        # DISPLAY USER QUESTION
-        # ====================================================
+        # ----------------------------------------------------
+        # Display user's question
+        # ----------------------------------------------------
 
-        with st.chat_message("user"):
+        with st.chat_message(
+            "user"
+        ):
 
             st.markdown(
                 question
             )
 
 
-        # ====================================================
-        # SAVE USER QUESTION
-        # ====================================================
+        # ----------------------------------------------------
+        # Store user message
+        # ----------------------------------------------------
 
         st.session_state.messages.append(
             {
@@ -442,78 +405,151 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # RETRIEVE RELEVANT DOCUMENT CHUNKS
+        # BUILD CHAT HISTORY
+        # ====================================================
+
+        previous_messages = (
+            st.session_state.messages[:-1]
+        )
+
+
+        chat_history_parts = []
+
+
+        for message in previous_messages:
+
+            role = message["role"].capitalize()
+
+            content = message["content"]
+
+            chat_history_parts.append(
+                f"{role}: {content}"
+            )
+
+
+        chat_history = "\n".join(
+            chat_history_parts
+        )
+
+
+        # ====================================================
+        # FEATURE 7 — QUERY REWRITING
         # ====================================================
 
         with st.spinner(
-            "Searching your document..."
+            "🔎 Understanding your question..."
         ):
 
-            results = retrieve_relevant_chunks(
-                query=question,
-                chunks=chunks,
-                document_embeddings=document_embeddings,
-                embedding_model=embedding_model,
-                top_k=3
+            search_query = generate_search_query(
+                question,
+                chat_history
+            )
+
+
+        # ----------------------------------------------------
+        # Show rewritten search query
+        # ----------------------------------------------------
+
+        if (
+            search_query.strip()
+            != question.strip()
+        ):
+
+            with st.expander(
+                "🔎 Retrieval Query"
+            ):
+
+                st.markdown(
+                    "**Original Question:**"
+                )
+
+                st.write(
+                    question
+                )
+
+
+                st.markdown(
+                    "**Rewritten Search Query:**"
+                )
+
+                st.write(
+                    search_query
+                )
+
+
+        # ====================================================
+        # RETRIEVE RELEVANT CHUNKS
+        # ====================================================
+
+        with st.spinner(
+            "🔍 Searching relevant sections..."
+        ):
+
+            relevant_chunks = (
+                retrieve_relevant_chunks(
+                    query=search_query,
+                    chunks=chunks,
+                    document_embeddings=document_embeddings,
+                    embedding_model=embedding_model,
+                    top_k=3
+                )
             )
 
 
         # ====================================================
-        # GENERATE ANSWER
+        # CHECK RETRIEVAL RESULTS
         # ====================================================
 
-        if not results:
+        if not relevant_chunks:
 
             answer = (
                 "I could not find relevant information "
                 "in the uploaded document."
             )
 
+            source_information = []
+
+
         else:
 
             # ------------------------------------------------
-            # COMBINE RELEVANT CHUNKS
+            # Build context for the AI
             # ------------------------------------------------
 
-            context = "\n\n".join(
-                result["chunk"]
-                for result in results
-            )
+            context_parts = []
 
 
-            # ------------------------------------------------
-            # BUILD PREVIOUS CHAT HISTORY
-            # ------------------------------------------------
+            for result in relevant_chunks:
 
-            previous_messages = (
-                st.session_state.messages[:-1]
-            )
+                chunk_index = result["index"]
 
-            chat_history_parts = []
+                chunk_text = result["chunk"]
+
+                page_number = chunk_data[
+                    chunk_index
+                ]["page"]
 
 
-            for message in previous_messages:
+                context_parts.append(
+                    f"""
+Page {page_number}:
 
-                role = message["role"].capitalize()
-
-                content = message["content"]
-
-                chat_history_parts.append(
-                    f"{role}: {content}"
+{chunk_text}
+"""
                 )
 
 
-            chat_history = "\n".join(
-                chat_history_parts
+            context = "\n\n".join(
+                context_parts
             )
 
 
-            # ------------------------------------------------
-            # GENERATE CONTEXT-AWARE ANSWER
-            # ------------------------------------------------
+            # =================================================
+            # GENERATE ANSWER
+            # =================================================
 
             with st.spinner(
-                "Generating answer..."
+                "🤖 Generating answer..."
             ):
 
                 answer = generate_answer(
@@ -523,19 +559,66 @@ if uploaded_file is not None:
                 )
 
 
+            source_information = (
+                relevant_chunks
+            )
+
+
         # ====================================================
-        # DISPLAY AI ANSWER
+        # DISPLAY AI RESPONSE
         # ====================================================
 
-        with st.chat_message("assistant"):
+        with st.chat_message(
+            "assistant"
+        ):
 
             st.markdown(
                 answer
             )
 
 
+            # ------------------------------------------------
+            # Source citations
+            # ------------------------------------------------
+
+            if source_information:
+
+                st.markdown(
+                    "### 📚 Sources"
+                )
+
+
+                for rank, result in enumerate(
+                    source_information,
+                    start=1
+                ):
+
+                    chunk_index = result[
+                        "index"
+                    ]
+
+                    similarity = result[
+                        "score"
+                    ]
+
+                    page_number = chunk_data[
+                        chunk_index
+                    ]["page"]
+
+
+                    st.markdown(
+                        f"""
+**Source {rank}**
+
+- 📄 Page: {page_number}
+- 🧩 Chunk: {chunk_index + 1}
+- 🎯 Similarity: {similarity:.4f}
+"""
+                    )
+
+
         # ====================================================
-        # SAVE AI ANSWER
+        # STORE ASSISTANT RESPONSE
         # ====================================================
 
         st.session_state.messages.append(
@@ -546,57 +629,15 @@ if uploaded_file is not None:
         )
 
 
-        # ====================================================
-        # DISPLAY PAGE NUMBER CITATIONS
-        # ====================================================
+# ============================================================
+# NO PDF UPLOADED
+# ============================================================
 
-        if results:
+else:
 
-            st.markdown(
-                "### 📚 Sources Used"
-            )
-
-
-            for rank, result in enumerate(
-                results,
-                start=1
-            ):
-
-                score = result["score"]
-
-                chunk_index = result["index"]
-
-                page_number = chunk_data[
-                    chunk_index
-                ]["page"]
-
-
-                with st.expander(
-                    f"📄 Source {rank} — "
-                    f"Page {page_number} — "
-                    f"Chunk {chunk_index + 1} — "
-                    f"Similarity: {score:.4f}"
-                ):
-
-                    st.markdown(
-                        f"**📄 Page:** {page_number}"
-                    )
-
-                    st.markdown(
-                        f"**🧩 Chunk:** "
-                        f"{chunk_index + 1}"
-                    )
-
-                    st.markdown(
-                        f"**🎯 Similarity Score:** "
-                        f"{score:.4f}"
-                    )
-
-                    st.divider()
-
-                    st.write(
-                        result["chunk"]
-                    )
+    st.info(
+        "👆 Upload a PDF to start asking questions."
+    )
 
 
 # ============================================================
@@ -609,5 +650,5 @@ st.caption(
     "LocalAI StudyMate | "
     "PDF → Page-aware Chunks → Embeddings → "
     "Semantic Search → Conversational RAG → "
-    "Caching → Page Citations → AI Answer"
+    "Caching → Query Rewriting → Page Citations → AI Answer"
 )

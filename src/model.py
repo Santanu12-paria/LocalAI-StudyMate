@@ -1,6 +1,100 @@
 import requests
 
 
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+MODEL_NAME = "llama3.2:3b"
+
+
+def generate_search_query(
+    question,
+    chat_history=""
+):
+    """
+    Rewrite the user's current question into a
+    standalone search query using conversation history.
+
+    The rewritten query is used only for document retrieval.
+    """
+
+    # --------------------------------------------------------
+    # If there is no previous conversation, the original
+    # question is already sufficient for retrieval.
+    # --------------------------------------------------------
+
+    if not chat_history.strip():
+
+        return question.strip()
+
+
+    prompt = f"""
+You are a query rewriting assistant for a document
+question-answering system.
+
+Your task is to rewrite the user's current question
+into a clear, standalone search query.
+
+Use the previous conversation to understand references
+such as:
+- it
+- this
+- that
+- they
+- them
+- these
+- those
+
+Keep the meaning of the user's question unchanged.
+
+Do NOT answer the question.
+
+Return ONLY the rewritten search query.
+Do not add explanations.
+Do not add quotation marks.
+
+Previous Conversation:
+{chat_history}
+
+Current Question:
+{question}
+
+Standalone Search Query:
+"""
+
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL_NAME,
+            "prompt": prompt,
+            "stream": False
+        }
+    )
+
+
+    if response.status_code != 200:
+
+        # ----------------------------------------------------
+        # If rewriting fails, fall back to the original
+        # question instead of breaking the RAG system.
+        # ----------------------------------------------------
+
+        return question.strip()
+
+
+    result = response.json()
+
+    rewritten_query = result["response"].strip()
+
+
+    if not rewritten_query:
+
+        return question.strip()
+
+
+    return rewritten_query
+
+
 def generate_answer(
     question,
     context,
@@ -49,14 +143,16 @@ Current Question:
 Answer:
 """
 
+
     response = requests.post(
-        "http://localhost:11434/api/generate",
+        OLLAMA_URL,
         json={
-            "model": "llama3.2:3b",
+            "model": MODEL_NAME,
             "prompt": prompt,
             "stream": False
         }
     )
+
 
     if response.status_code != 200:
 
@@ -64,6 +160,7 @@ Answer:
             f"Ollama request failed: "
             f"{response.status_code}"
         )
+
 
     result = response.json()
 
