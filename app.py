@@ -20,7 +20,8 @@ from src.model import (
     generate_summary,
     generate_key_points,
     generate_study_questions,
-    generate_definitions
+    generate_definitions,
+    generate_quiz
 )
 
 
@@ -55,28 +56,53 @@ embedding_model = load_embedding_model()
 # ============================================================
 
 if "documents" not in st.session_state:
-
     st.session_state.documents = {}
 
 
 if "active_document" not in st.session_state:
-
     st.session_state.active_document = None
 
 
 if "chat_history" not in st.session_state:
-
     st.session_state.chat_history = []
 
 
 if "study_results" not in st.session_state:
-
     st.session_state.study_results = {}
 
 
 if "study_type" not in st.session_state:
-
     st.session_state.study_type = "Summary"
+
+
+# ---------------- QUIZ STATE ----------------
+
+if "quiz_questions" not in st.session_state:
+    st.session_state.quiz_questions = []
+
+
+if "quiz_current" not in st.session_state:
+    st.session_state.quiz_current = 0
+
+
+if "quiz_answers" not in st.session_state:
+    st.session_state.quiz_answers = {}
+
+
+if "quiz_submitted" not in st.session_state:
+    st.session_state.quiz_submitted = False
+
+
+if "quiz_completed" not in st.session_state:
+    st.session_state.quiz_completed = False
+
+
+if "quiz_score" not in st.session_state:
+    st.session_state.quiz_score = 0
+
+
+if "quiz_document_id" not in st.session_state:
+    st.session_state.quiz_document_id = None
 
 
 # ============================================================
@@ -88,6 +114,23 @@ def get_document_id(file_bytes):
     return hashlib.md5(
         file_bytes
     ).hexdigest()
+
+
+def reset_quiz():
+
+    st.session_state.quiz_questions = []
+
+    st.session_state.quiz_current = 0
+
+    st.session_state.quiz_answers = {}
+
+    st.session_state.quiz_submitted = False
+
+    st.session_state.quiz_completed = False
+
+    st.session_state.quiz_score = 0
+
+    st.session_state.quiz_document_id = None
 
 
 def process_document(
@@ -142,6 +185,10 @@ def process_document(
 
     return document_id
 
+
+# ============================================================
+# CREATE STUDY MATERIAL PDF
+# ============================================================
 
 def create_study_material_pdf(
     document_name,
@@ -240,7 +287,6 @@ def create_study_material_pdf(
     for title, key in sections:
 
         if key not in study_results:
-
             continue
 
         story.append(
@@ -437,6 +483,8 @@ with st.sidebar:
 
             st.session_state.study_results = {}
 
+            reset_quiz()
+
             st.rerun()
 
         st.success(
@@ -482,6 +530,8 @@ with st.sidebar:
                 st.session_state.chat_history = []
 
                 st.session_state.study_results = {}
+
+                reset_quiz()
 
             st.success(
                 f"Removed: {document_to_remove}"
@@ -934,7 +984,6 @@ if st.button(
             # Clear previous results
             st.session_state.study_results = {}
 
-
             # ------------------------------------------------
             # SUMMARY
             # ------------------------------------------------
@@ -949,7 +998,6 @@ if st.button(
                 ] = generate_summary(
                     all_text
                 )
-
 
             # ------------------------------------------------
             # KEY POINTS
@@ -966,7 +1014,6 @@ if st.button(
                     all_text
                 )
 
-
             # ------------------------------------------------
             # STUDY QUESTIONS
             # ------------------------------------------------
@@ -982,7 +1029,6 @@ if st.button(
                     all_text
                 )
 
-
             # ------------------------------------------------
             # DEFINITIONS
             # ------------------------------------------------
@@ -997,7 +1043,6 @@ if st.button(
                 ] = generate_definitions(
                     all_text
                 )
-
 
             st.success(
                 f"{study_type} generated successfully!"
@@ -1019,7 +1064,6 @@ if st.session_state.study_results:
 
     results = st.session_state.study_results
 
-
     if "summary" in results:
 
         with st.expander(
@@ -1030,7 +1074,6 @@ if st.session_state.study_results:
             st.markdown(
                 results["summary"]
             )
-
 
     if "key_points" in results:
 
@@ -1043,7 +1086,6 @@ if st.session_state.study_results:
                 results["key_points"]
             )
 
-
     if "questions" in results:
 
         with st.expander(
@@ -1055,7 +1097,6 @@ if st.session_state.study_results:
                 results["questions"]
             )
 
-
     if "definitions" in results:
 
         with st.expander(
@@ -1066,7 +1107,6 @@ if st.session_state.study_results:
             st.markdown(
                 results["definitions"]
             )
-
 
     # --------------------------------------------------------
     # PDF DOWNLOAD
@@ -1101,6 +1141,410 @@ if st.session_state.study_results:
 
 
 # ============================================================
+# QUIZ MODE
+# ============================================================
+
+st.divider()
+
+st.header(
+    "📝 Quiz Mode"
+)
+
+st.write(
+    "Test your understanding of the "
+    "currently selected document."
+)
+
+
+# ------------------------------------------------------------
+# QUIZ SETTINGS
+# ------------------------------------------------------------
+
+quiz_col1, quiz_col2 = st.columns(2)
+
+with quiz_col1:
+
+    quiz_num_questions = st.selectbox(
+        "Number of Questions",
+        [5, 10, 15],
+        index=0,
+        key="quiz_num_questions"
+    )
+
+with quiz_col2:
+
+    quiz_difficulty = st.selectbox(
+        "Difficulty",
+        [
+            "Easy",
+            "Medium",
+            "Hard"
+        ],
+        index=1,
+        key="quiz_difficulty"
+    )
+
+
+# ------------------------------------------------------------
+# GENERATE QUIZ
+# ------------------------------------------------------------
+
+if st.button(
+    "🚀 Generate Quiz",
+    use_container_width=True
+):
+
+    all_text = "\n\n".join(
+
+        item["chunk"]
+        for item in chunks
+
+    )
+
+    with st.spinner(
+        "Generating your quiz..."
+    ):
+
+        try:
+
+            quiz_data = generate_quiz(
+                all_text,
+                num_questions=quiz_num_questions,
+                difficulty=quiz_difficulty
+            )
+
+            st.session_state.quiz_questions = (
+                quiz_data["questions"]
+            )
+
+            st.session_state.quiz_current = 0
+
+            st.session_state.quiz_answers = {}
+
+            st.session_state.quiz_submitted = False
+
+            st.session_state.quiz_completed = False
+
+            st.session_state.quiz_score = 0
+
+            st.session_state.quiz_document_id = (
+                st.session_state.active_document
+            )
+
+            st.success(
+                "Quiz generated successfully!"
+            )
+
+            st.rerun()
+
+        except Exception as e:
+
+            st.error(
+                f"Could not generate quiz: {e}"
+            )
+
+
+# ============================================================
+# DISPLAY QUIZ
+# ============================================================
+
+if st.session_state.quiz_questions:
+
+    # --------------------------------------------------------
+    # CHECK QUIZ DOCUMENT
+    # --------------------------------------------------------
+
+    if (
+        st.session_state.quiz_document_id
+        != st.session_state.active_document
+    ):
+
+        reset_quiz()
+
+        st.info(
+            "The selected document changed. "
+            "Please generate a new quiz."
+        )
+
+    else:
+
+        questions = (
+            st.session_state.quiz_questions
+        )
+
+        current_index = (
+            st.session_state.quiz_current
+        )
+
+        total_questions = len(
+            questions
+        )
+
+        # ----------------------------------------------------
+        # FINAL SCORE
+        # ----------------------------------------------------
+
+        if st.session_state.quiz_completed:
+
+            score = st.session_state.quiz_score
+
+            percentage = (
+                score / total_questions
+            ) * 100
+
+            st.subheader(
+                "🎉 Quiz Completed!"
+            )
+
+            st.metric(
+                "Your Score",
+                f"{score} / {total_questions}"
+            )
+
+            st.metric(
+                "Percentage",
+                f"{percentage:.1f}%"
+            )
+
+            if percentage >= 80:
+
+                st.success(
+                    "Great work! You have a strong "
+                    "understanding of this document."
+                )
+
+            elif percentage >= 50:
+
+                st.info(
+                    "Good attempt! Review the questions "
+                    "you missed and try again."
+                )
+
+            else:
+
+                st.warning(
+                    "Keep studying the document and "
+                    "try the quiz again."
+                )
+
+            st.divider()
+
+            st.subheader(
+                "📋 Quiz Review"
+            )
+
+            for index, question_data in enumerate(
+                questions
+            ):
+
+                user_answer = (
+                    st.session_state.quiz_answers.get(
+                        index
+                    )
+                )
+
+                correct_answer = question_data[
+                    "correct_answer"
+                ]
+
+                st.markdown(
+                    f"### Question {index + 1}"
+                )
+
+                st.write(
+                    question_data["question"]
+                )
+
+                if user_answer is None:
+
+                    st.write(
+                        "Your answer: Not answered"
+                    )
+
+                else:
+
+                    st.write(
+                        f"Your answer: "
+                        f"{question_data['options'][user_answer]}"
+                    )
+
+                st.write(
+                    f"Correct answer: "
+                    f"{question_data['options'][correct_answer]}"
+                )
+
+                st.info(
+                    question_data["explanation"]
+                )
+
+                st.divider()
+
+            if st.button(
+                "🔄 Restart Quiz",
+                use_container_width=True
+            ):
+
+                reset_quiz()
+
+                st.rerun()
+
+        # ----------------------------------------------------
+        # CURRENT QUESTION
+        # ----------------------------------------------------
+
+        else:
+
+            question_data = questions[
+                current_index
+            ]
+
+            st.progress(
+                (
+                    current_index + 1
+                ) / total_questions
+            )
+
+            st.write(
+                f"**Question "
+                f"{current_index + 1} "
+                f"of {total_questions}**"
+            )
+
+            st.subheader(
+                question_data["question"]
+            )
+
+            option_labels = [
+
+                f"A. {question_data['options'][0]}",
+                f"B. {question_data['options'][1]}",
+                f"C. {question_data['options'][2]}",
+                f"D. {question_data['options'][3]}"
+
+            ]
+
+            selected_option = st.radio(
+
+                "Select your answer:",
+
+                option_labels,
+
+                key=f"quiz_option_{current_index}"
+
+            )
+
+            selected_index = option_labels.index(
+                selected_option
+            )
+
+            # ------------------------------------------------
+            # SUBMIT ANSWER
+            # ------------------------------------------------
+
+            if not st.session_state.quiz_submitted:
+
+                if st.button(
+                    "✅ Submit Answer",
+                    use_container_width=True
+                ):
+
+                    st.session_state.quiz_answers[
+                        current_index
+                    ] = selected_index
+
+                    st.session_state.quiz_submitted = (
+                        True
+                    )
+
+                    if (
+                        selected_index
+                        == question_data[
+                            "correct_answer"
+                        ]
+                    ):
+
+                        st.session_state.quiz_score += 1
+
+                    st.rerun()
+
+            # ------------------------------------------------
+            # ANSWER FEEDBACK
+            # ------------------------------------------------
+
+            else:
+
+                correct_index = (
+                    question_data[
+                        "correct_answer"
+                    ]
+                )
+
+                if (
+                    selected_index
+                    == correct_index
+                ):
+
+                    st.success(
+                        "✅ Correct answer!"
+                    )
+
+                else:
+
+                    st.error(
+                        "❌ Incorrect answer."
+                    )
+
+                    st.write(
+                        f"**Correct answer:** "
+                        f"{option_labels[correct_index]}"
+                    )
+
+                st.info(
+                    f"**Explanation:** "
+                    f"{question_data['explanation']}"
+                )
+
+                # --------------------------------------------
+                # NEXT QUESTION
+                # --------------------------------------------
+
+                if (
+                    current_index
+                    < total_questions - 1
+                ):
+
+                    if st.button(
+                        "➡️ Next Question",
+                        use_container_width=True
+                    ):
+
+                        st.session_state.quiz_current += 1
+
+                        st.session_state.quiz_submitted = (
+                            False
+                        )
+
+                        st.rerun()
+
+                else:
+
+                    if st.button(
+                        "🏁 Finish Quiz",
+                        use_container_width=True
+                    ):
+
+                        st.session_state.quiz_completed = (
+                            True
+                        )
+
+                        st.session_state.quiz_submitted = (
+                            False
+                        )
+
+                        st.rerun()
+
+
+# ============================================================
 # FOOTER
 # ============================================================
 
@@ -1110,8 +1554,9 @@ st.caption(
     "PDF → Multi-Document Management → "
     "Page-aware Chunks → Embeddings → "
     "Semantic Search → Conversational RAG → "
-    "Query Rewriting → Page Citations → "
-    "Study Mode → PDF Study Material → "
-    "Conversation Export → Clear Conversation → "
-    "AI Answer"
+    "Query Rewriting → Similarity Filtering → "
+    "Page Citations → Study Mode → "
+    "PDF Study Material → Quiz Mode → "
+    "Conversation Export → "
+    "Clear Conversation → AI Answer"
 )
